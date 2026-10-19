@@ -49,20 +49,21 @@ Every shot is the real FLTR page from digiemu, not a mock-up.
 
 Per voice per 32-frame block (MCF54418, `tests/analog_bench.py`):
 
-| mode | static | swept |
-|---|---|---|
-| VOWEL | 3042 / ~3455 cyc | 5011 / ~6176 cyc |
-| BANK | 3042 / ~3455 | 5017 / ~6187 |
-| FOLD | 451–547 / ~560–800 | same |
-| CRUSH | 406 / ~512 | same |
-| RING | 666 / ~930 | same |
-| PHASER | 2583 / ~3700 | same |
-| FLANGER | 1794 / ~2180 | same |
-| stock filter (reference) | ~2400 insn | — |
+| mode | static | swept | vs stock (static / swept) |
+|---|---|---|---|
+| VOWEL | 3042 / ~3455 cyc | 5011 / ~6176 cyc | **+27 % / +109 %** |
+| BANK | 3042 / ~3455 | 5017 / ~6187 | **+27 % / +109 %** |
+| FOLD | 451–547 / ~560–800 | same | **‑77…‑81 %** |
+| CRUSH | 406 / ~512 | same | **‑83 %** |
+| RING | 666 / ~930 | same | **‑72 %** |
+| PHASER | 2583 / ~3700 | same | **+8 %** |
+| FLANGER | 1794 / ~2180 | same | **‑25 %** |
+| stock filter (reference) | ~2400 insn | — | 1.00× |
 
-VOWEL/BANK use four independent biquads, one eMAC accumulator per band.
-FOLD/CRUSH/RING/PHASER/FLANGER have no coefficient ramp. FLANGER allocates
-512 samples per voice (16 KB).
+The `vs stock` column compares instructions per voice/block with the stock
+filter (~2400). VOWEL/BANK use four independent biquads, one eMAC accumulator
+per band. FOLD/CRUSH/RING/PHASER/FLANGER have no coefficient ramp. FLANGER
+allocates 512 samples per voice (16 KB).
 
 ## Build
 

@@ -42,18 +42,21 @@ def main():
     uc.mem_map(0x80000000, 0x20000)
     uc.mem_write(BASE, open(bin_, 'rb').read())
 
-    def run(type_, fi, qi, block=0):
+    def call(type_, fi, qi, values):
         uc.mem_write(sym['df_params'], bytes([type_]) + b'\x00' * 0xff)
         uc.mem_write(sym['df_params'] + 2, struct.pack('>H', fi << 8))
         uc.mem_write(sym['df_params'] + 6, struct.pack('>H', 0x4000))
         uc.mem_write(0x80001502 + 0x36, struct.pack('>H', qi << 8))
-        values = [int(math.sin(2 * math.pi * 1500 * (block * 32 + i) / 48000) * (1 << 26))
-                  for i in range(32)]
         uc.mem_write(sym['df_buf'], b''.join(struct.pack('>i', v) for v in values))
         uc.mem_write(STACK - 4, RET.to_bytes(4, 'big'))
         uc.reg_write(UC_M68K_REG_A7, STACK - 4)
         uc.emu_start(sym['df_filt_run'], RET, count=2000000)
         return list(struct.unpack('>32i', uc.mem_read(sym['df_buf'], 128)))
+
+    def run(type_, fi, qi, block=0, amp=1 << 26):
+        values = [int(math.sin(2 * math.pi * 1500 * (block * 32 + i) / 48000) * amp)
+                  for i in range(32)]
+        return call(type_, fi, qi, values)
 
     nonzero = {}
     for type_, name in ((8, 'VOWEL'), (9, 'BANK'), (10, 'FOLD'), (11, 'CRUSH'), (12, 'RING'), (13, 'PHASER'), (14, 'FLANGER')):
@@ -65,7 +68,20 @@ def main():
                 if peak:
                     nonzero[name] = 1
     assert len(nonzero) == 7, nonzero
-    print('PASS: all seven modes produce bounded, non-silent output')
+
+    full = 1 << 27
+    for fi in (0, 32, 64, 96, 127):
+        for block in range(8):
+            out = run(13, fi, 127, block, amp=full)
+            peak = max(abs(v) for v in out)
+            assert peak <= full, ('PHASER', fi, block, peak)
+    out = call(14, 64, 0, [1 << 26] + [0] * 31)
+    for _ in range(5):
+        out += call(14, 64, 0, [0] * 32)
+    echo = [i for i, v in enumerate(out) if v]
+    assert any(120 <= i <= 140 for i in echo), ('FLANGER', echo)
+    print('PASS: all seven modes produce bounded, non-silent output; '
+          'PHASER stays inside full scale; FLANGER echoes at its centre delay')
 
 
 if __name__ == '__main__':

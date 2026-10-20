@@ -2,16 +2,20 @@
  *
  * Subscribes to core's ev_draw; after the frame (stock curve included) has been
  * drawn, paints ours over the graph when the FLTR page is up and the active
- * track uses one of our TYPEs. No second page and no commandeered knobs: the
- * two models use only FREQ and RESO.
+ * track uses one of our TYPEs. On the second FLTR page it also paints the two
+ * VOWEL/BANK dials for the descriptors commandeered by digifilter_tick.
  */
 #ifdef OS154
 #define F_400c19a6 0x400c1bce
+#define F_401a9d9c 0x401aa09c
 #define F_4197b6b4 0x4197c6b4
+#define F_4197cf88 0x4197df88
 #define F_4199dc44 0x4199ec44
 #else
 #define F_400c19a6 0x400c19a6
+#define F_401a9d9c 0x401a9d9c
 #define F_4197b6b4 0x4197b6b4
+#define F_4197cf88 0x4197cf88
 #define F_4199dc44 0x4199dc44
 #endif
 
@@ -40,8 +44,25 @@ typedef void (*fillrect_t)(void *bmp, int x0, int y0, int x1, int y1, int colour
 #define FS_TYPE 0x19
 #define FS_FREQ 0x1a
 #define FS_RESO 0x1b
+#define FS_AUX1 0x2f
+#define FS_AUX2 0x30
 
 #define FLTR_KIND 6
+#define FLTR2_KIND 7
+#define DESC_TABLE ((unsigned)F_401a9d9c)
+#define DESC_STRIDE 0x34
+#define DESC_NEW0 14
+#define DESC_NEW1 15
+#define DESC_TEMPLATE 42
+#define LAYOUT_TABLE ((unsigned)F_4197cf88)
+#define LAYOUT_STRIDE 44
+#define LAYOUT_PAGE2 (LAYOUT_TABLE + FLTR2_KIND * LAYOUT_STRIDE)
+#define LAYOUT_IDS ((volatile unsigned *)(LAYOUT_PAGE2 + 8))
+
+static const char DF_L_SIZE[] = "SIZE";
+static const char DF_L_F4[] = "F4";
+static const char DF_L_SPREAD[] = "SPRD";
+static const char DF_L_TILT[] = "TILT";
 #define FM_FIRST_TYPE 8
 #define FM_FOLD 10
 #define FM_CRUSH 11
@@ -350,6 +371,117 @@ static void type_glyph(void *bmp, int mode)
     }
 }
 
+static int active_type(void)
+{
+    unsigned char *kit = UI_KIT;
+    int t = ACTIVE_TRACK;
+    if (!kit || t < 0 || t > 7)
+        return -1;
+    return FSLOT(kit, t, FS_TYPE) >> 8;
+}
+
+/* The second-page controls live in spare slots 0x2f/0x30. */
+static int aux_val(int slot)
+{
+    unsigned char *kit = UI_KIT;
+    int t = ACTIVE_TRACK;
+    if (!kit || t < 0 || t > 7)
+        return 0;
+    return clampi((unsigned)FSLOT(kit, t, slot) >> 8, 0, 127);
+}
+
+static void df_desc(unsigned id, int slot, const char *name)
+{
+    volatile unsigned char *d = (volatile unsigned char *)(DESC_TABLE + id * DESC_STRIDE);
+    const volatile unsigned char *t = (const volatile unsigned char *)(DESC_TABLE + DESC_TEMPLATE * DESC_STRIDE);
+    int i;
+    for (i = 0; i < DESC_STRIDE; i++)
+        d[i] = t[i];
+    *(volatile unsigned short *)(d + 2) = 6;            /* group = Filter */
+    *(volatile unsigned short *)(d + 6) = (unsigned short)slot;
+    *(volatile unsigned short *)(d + 14) = 0x7f00;      /* range 0..127 */
+    *(volatile unsigned short *)(d + 18) = 0x0100;      /* step 1 */
+    *(volatile unsigned *)(d + 0x30) = (unsigned)name;
+}
+
+/* kind 7 stock = {39,0,0,42,40,41,0,43}; our = {39,0,14,42,40,41,15,43}. */
+static void page2_setup(void)
+{
+    static const unsigned stock[8] = { 39, 0, 0, 42, 40, 41, 0, 43 };
+    static const unsigned own[8] = { 39, 0, 14, 42, 40, 41, 15, 43 };
+    static unsigned char orig[2][DESC_STRIDE];
+    static int init, last = -1;
+    int ty = active_type();
+    int mode = ty == FM_FIRST_TYPE ? 1 : ty == FM_FIRST_TYPE + 1 ? 2 : 0;
+    const unsigned *m = mode ? own : stock;
+    int i;
+    if (!init) {
+        init = 1;
+        for (i = 0; i < 2; i++) {
+            const volatile unsigned char *s = (const volatile unsigned char *)(DESC_TABLE + (DESC_NEW0 + i) * DESC_STRIDE);
+            int j;
+            for (j = 0; j < DESC_STRIDE; j++)
+                orig[i][j] = s[j];
+        }
+    }
+    if (mode != last) {
+        last = mode;
+        if (mode) {
+            df_desc(DESC_NEW0, FS_AUX1, mode == 1 ? DF_L_SIZE : DF_L_SPREAD);
+            df_desc(DESC_NEW1, FS_AUX2, mode == 1 ? DF_L_F4 : DF_L_TILT);
+        } else {
+            for (i = 0; i < 2; i++) {
+                volatile unsigned char *d = (volatile unsigned char *)(DESC_TABLE + (DESC_NEW0 + i) * DESC_STRIDE);
+                int j;
+                for (j = 0; j < DESC_STRIDE; j++)
+                    d[j] = orig[i][j];
+            }
+        }
+    }
+    for (i = 0; i < 8; i++)
+        if (LAYOUT_IDS[i] != m[i])
+            LAYOUT_IDS[i] = m[i];
+}
+
+void digifilter_page2_sync(void)
+{
+    page2_setup();
+}
+
+static void dial_px(void *bmp, int x, int y)
+{
+    FILLRECT(bmp, x, y, x, y, 1);
+}
+
+#define DIAL_R 8
+static void draw_dial(void *bmp, int cx, int cy, int v)
+{
+    int x = DIAL_R, y = 0, e = 0;
+    while (x >= y) {
+        dial_px(bmp, cx + x, cy + y); dial_px(bmp, cx + y, cy + x);
+        dial_px(bmp, cx - y, cy + x); dial_px(bmp, cx - x, cy + y);
+        dial_px(bmp, cx - x, cy - y); dial_px(bmp, cx - y, cy - x);
+        dial_px(bmp, cx + y, cy - x); dial_px(bmp, cx + x, cy - y);
+        y++;
+        if (e <= 0)
+            e += 2 * y + 1;
+        if (e > 0) {
+            x--;
+            e -= 2 * x + 1;
+        }
+    }
+    {
+        /* Clock angle (0 = 12:00, increasing clockwise): 0 -> 9:00 and
+         * 127 -> 7:00, a 300-degree sweep through 12:00. */
+        int idx = 192 + v * 213 / 127;
+        int dx = (SINE_Q15[idx & 255] * DIAL_R) >> 15;          /* sin */
+        int dy = (SINE_Q15[(idx + 64) & 255] * DIAL_R) >> 15;   /* cos */
+        int k;
+        for (k = 1; k <= DIAL_R; k++)
+            dial_px(bmp, cx + dx * k / DIAL_R, cy + dy * k / DIAL_R);
+    }
+}
+
 static int read_track(int *type, int *fi, int *qi)
 {
     unsigned char *kit = UI_KIT;
@@ -375,7 +507,7 @@ static int view_kind(void *view)
     return v[i];
 }
 
-static void *page_view(void *ctrl)
+static void *page_view(void *ctrl, int *kind)
 {
     char *node, *sent;
     if (!ctrl)
@@ -383,19 +515,30 @@ static void *page_view(void *ctrl)
     sent = CTRL_SENTINEL(ctrl);
     for (node = CTRL_HEAD(ctrl); node && node != sent; node = NODE_NEXT(node)) {
         void *view = NODE_VIEW(node);
-        if (view && view_kind(view) == FLTR_KIND)
+        int k = view ? view_kind(view) : -1;
+        if (k == FLTR_KIND || k == FLTR2_KIND) {
+            if (kind)
+                *kind = k;
             return view;
+        }
     }
     return 0;
 }
 
 void digifilter_draw(void *bmp, void *ctrl)
 {
-    int mode, fi, qi, x, prev = -1;
-    if (!bmp || !page_view(ctrl))
+    int mode, fi, qi, x, prev = -1, kind = -1;
+    if (!bmp || !page_view(ctrl, &kind))
         return;
     if (!read_track(&mode, &fi, &qi))
         return;
+    if (kind == FLTR2_KIND) {
+        if (mode == FM_FIRST_TYPE || mode == FM_FIRST_TYPE + 1) {
+            draw_dial(bmp, 85, 41, aux_val(FS_AUX1));
+            draw_dial(bmp, 85, 15, aux_val(FS_AUX2));
+        }
+        return;
+    }
     FILLRECT(bmp, GX0 + 1, GY0 + 1, GX1 - 1, GY1 - 1, 0);
     build_curve(mode, fi, qi);
     for (x = GX0 + 1; x < GX1; x++) {

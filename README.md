@@ -38,12 +38,29 @@ Every shot is the real FLTR page from digiemu, not a mock-up.
 - **FOLD** is a triangle folder; **CRUSH** is sample-rate reduction + 1–16 bit
   quantisation.
 - **RING** is a sine carrier ring modulator.
-- **PHASER** is four cascaded first-order allpasses with an LFO.
-- **FLANGER** is a short LFO-modulated fractional delay with feedback.
+- **PHASER** is four cascaded first-order allpasses with an LFO; its output
+  saturates at full scale so transient allpass overshoot cannot wrap.
+- **FLANGER** is a short LFO-modulated fractional delay, mixed dry + delayed,
+  with feedback in the delay line.
 - The stock filter envelope moves the FREQ position, so it also modulates the
   vowel position, bank shift, fold drive, crush rate, ring frequency and the
   phaser/flanger LFO rate.
 - Stock TYPE 0–7 still run the stock filter and keep the stock curve.
+
+## Second FLTR page
+
+VOWEL and BANK reuse the second FLTR page for two extra controls, in the same
+way COMB/TRASH do in the parent DigiFilter. Value 0 is the neutral/default sound.
+
+| mode | C encoder | G encoder | what it does |
+|---|---|---|---|
+| VOWEL | **SIZE** | **F4** | SIZE scales F1–F4 up to +1 octave; F4 sets the 3300 Hz band from 1× to 2× |
+| BANK | **SPRD** | **TILT** | SPRD widens the bank spacing up to +1 octave on the top band; TILT goes from dark to bright |
+
+Each dial sweeps clockwise from 9:00 (value 0) through 12:00 to 7:00 (value 127).
+
+The values are mirrored into the low bytes of Base/Width so they survive a kit
+save/load. Other Filter+FX modes leave the second page stock.
 
 ## Cost
 
@@ -51,19 +68,19 @@ Per voice per 32-frame block (MCF54418, `tests/analog_bench.py`):
 
 | mode | static | swept | vs stock (static / swept) |
 |---|---|---|---|
-| VOWEL | 3042 / ~3455 cyc | 5011 / ~6176 cyc | **+27 % / +109 %** |
-| BANK | 3042 / ~3455 | 5017 / ~6187 | **+27 % / +109 %** |
-| FOLD | 451–547 / ~560–800 | same | **‑77…‑81 %** |
-| CRUSH | 406 / ~512 | same | **‑83 %** |
-| RING | 666 / ~930 | same | **‑72 %** |
-| PHASER | 2583 / ~3700 | same | **+8 %** |
-| FLANGER | 1794 / ~2180 | same | **‑25 %** |
-| stock filter (reference) | ~2400 insn | — | 1.00× |
+| VOWEL | 3074 / ~3513 cyc | 5082 / ~6371 cyc | **+28 % / +112 %** |
+| BANK | 3074 / ~3515 | 5376 / ~7009 | **+28 % / +124 %** |
+| FOLD | 452-548 / ~559-799 | same | **-77..-81 %** |
+| CRUSH | 408 / ~522 | same | **-83 %** |
+| RING | 668 / ~930 | same | **-72 %** |
+| PHASER | 2681 / ~3740 | same | **+12 %** |
+| FLANGER | 2019 / ~2371 | same | **-16 %** |
+| stock filter (reference) | ~2400 insn | - | 1.00x |
 
 The `vs stock` column compares instructions per voice/block with the stock
 filter (~2400). VOWEL/BANK use four independent biquads, one eMAC accumulator
 per band. FOLD/CRUSH/RING/PHASER/FLANGER have no coefficient ramp. FLANGER
-allocates 512 samples per voice (16 KB).
+allocates 256 samples per voice as 16-bit (4 KB).
 
 ## Build
 
@@ -73,18 +90,21 @@ export ELEKLOADER_CROSS=m68k-elf-
 export PYTHONPATH="<elekloader checkout>"
 
 python -m elekloader.sdk.build . --stock <Digitakt_OS1.53.syx>
-python -m elekloader.lint  out/filter-fx-1.0c.elemod \
+python -m elekloader.lint  out/filter-fx-1.1a.elemod \
     --stock <Digitakt_OS1.53.syx> --with <core.elemod>
 ```
 
 `mod.json` also carries the OS 1.54 port; use the 1.54 stock with an
-elekloader that supports it.
+elekloader that supports it. Delete `out/filter-fx.work` before building the
+other port: the SDK reuses that folder and its objects are not keyed by the
+port's defines, so an unclean build keeps the first port's `FILLRECT`/UI
+addresses and the curves and TYPE glyphs do not draw.
 
 ## Install
 
 ```sh
 python -m elekloader.patch --stock Digitakt_OS1.53.syx \
-    --mod core-2.1.elemod --mod out/filter-fx-1.0c.elemod \
+    --mod core-2.1.elemod --mod out/filter-fx-1.1a.elemod \
     --out Digitakt_OS1.53-filter-fx.syx --version 2.0t
 ```
 
@@ -103,7 +123,9 @@ Then flash the `.syx` with Elektron Transfer.
 | `mod_tables.h` | sine/LFO/ring-mod tables (`tools/gen_mod_tables.py`) |
 | `tests/analog_bench.py` | instruction/cycle bench |
 | `tests/analog_smoke.py` | bounded/non-silent check for all modes |
+| `tests/digiemu_filter_fx_page2.py` | second-page layout/descriptor/encoder check |
 | `tests/digiemu_filter_fx_shots.py` | regenerates the screenshots above |
+| `HANDOFF.md` | 1.1a state, verification, artifacts and open items |
 
 ## Licensing
 

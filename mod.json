@@ -1,11 +1,11 @@
 {
  "id": "filter-fx",
- "version": "1.0c",
+ "version": "1.1a",
  "title": "Filter+FX",
  "category": "Sound",
  "author": "Digital Alchemy DSP",
  "license": "GPL-2.0-or-later",
- "description": "Filter+FX adds seven analogue-style filter/FX models to the Digitakt mk1, using each track's own FREQ, RESO and filter envelope: VOWEL (TYPE 8), a four-formant vocal-tract filter that sweeps the vowel path i-e-a-o-u; BANK (TYPE 9), a four-resonator filterbank at 250/500/1000/2000 Hz; FOLD (TYPE 10), a triangle wavefolder; CRUSH (TYPE 11), sample-rate reduction plus bit-depth quantisation; RING (TYPE 12), a sine ring modulator; PHASER (TYPE 13), a four-stage allpass phaser; and FLANGER (TYPE 14), an LFO-modulated short delay. Widens the Filter Type range to 14 and renames the new values, runs the DSP at the per-voice filter call (site 0x400780ba -> digifilter_dispatch), and overpaints the FLTR page's graph and TYPE box (mouth, robot, folded wave, Pac-Man, ringed planet, vortex, waves) from a core ev_draw handler. Stock TYPE values tail-call the stock filter and keep the stock curve.",
+ "description": "Filter+FX adds seven analogue-style filter/FX models to the Digitakt mk1, using each track's own FREQ, RESO and filter envelope: VOWEL (TYPE 8), a four-formant vocal-tract filter that sweeps the vowel path i-e-a-o-u; BANK (TYPE 9), a four-resonator filterbank at 250/500/1000/2000 Hz; FOLD (TYPE 10), a triangle wavefolder; CRUSH (TYPE 11), sample-rate reduction plus bit-depth quantisation; RING (TYPE 12), a sine ring modulator; PHASER (TYPE 13), a four-stage allpass phaser; and FLANGER (TYPE 14), an LFO-modulated short delay. Widens the Filter Type range to 14 and renames the new values, runs the DSP at the per-voice filter call (site 0x400780ba -> digifilter_dispatch), and overpaints the FLTR page's graph and TYPE box (mouth, robot, folded wave, Pac-Man, ringed planet, vortex, waves) from a core ev_draw handler. VOWEL gets SIZE and F4 on the second FLTR page; BANK gets SPREAD and TILT. Stock TYPE values tail-call the stock filter and keep the stock curve.",
  "device": "digitakt-mk1",
  "os": "1.53",
  "sources": [
@@ -36,6 +36,11 @@
   }
  ],
  "subscribe": [
+  {
+   "event": "ev_tick",
+   "fn": "digifilter_tick",
+   "order": 50
+  },
   {
    "event": "ev_draw",
    "fn": "digifilter_draw",

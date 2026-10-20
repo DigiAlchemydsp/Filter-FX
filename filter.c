@@ -39,6 +39,9 @@ typedef unsigned int uint32;
 #define FS_TYPE 0x19
 #define FS_FREQ 0x1a
 #define FS_RESO 0x1b
+#define FS_AUX1 0x2f            /* second page: VOWEL SIZE / BANK SPREAD */
+#define FS_AUX2 0x30            /* second page: VOWEL F4  / BANK TILT */
+#define PARAM_SLOT(params, s) (*(volatile unsigned short *)((params) + 2 * (s) - 0x32))
 
 /* The stock LP/HP/EQ types occupy 0..7; ours follow. */
 #define FM_STOCK_TYPES 8
@@ -49,6 +52,14 @@ static const char *const FM_NAME[FM_NMODES] = {
 };
 
 #define MAX_BANDS 4
+
+/* Full-scale sample (the biquad kernel saturates here too). */
+#define FM_FULL (1 << 27)
+
+static inline int32 sat_full(int32 v)
+{
+    return v > FM_FULL ? FM_FULL : v < -FM_FULL ? -FM_FULL : v;
+}
 
 /* Q30 b0, b2, n1 = -a1, n2 = -a2. The bands are the same size for both modes. */
 struct bcoef { int32 b0, b2, n1, n2; };
@@ -98,16 +109,24 @@ static void band_coef(int fi8, int ek, int32 gain_q30, struct bcoef *c)
     c->n2 = t[3] << 1;
 }
 
-static void build_target(int m, int fi, int qi, struct bcoef *c)
+static void build_target(int m, int fi, int qi, int a1, int a2, struct bcoef *c)
 {
     int b, ek = q_row(qi);
     if (m == FM_VOWEL) {
-        for (b = 0; b < VOWEL_N; b++)
-            band_coef(VOWEL_FI8[b][fi], ek, VOWEL_GAIN[b] << 3, &c[b]);
+        int off = a1 * 12 * 256 / 127;              /* SIZE: 0..+1 octave */
+        int32 g4 = mulsh(VOWEL_GAIN[3], (127 + a2) * 258, 15) << 3; /* F4: 1..2x */
+        for (b = 0; b < VOWEL_N - 1; b++)
+            band_coef(VOWEL_FI8[b][fi] + off, ek, VOWEL_GAIN[b] << 3, &c[b]);
+        band_coef(VOWEL_FI8[3][fi] + off, ek, g4, &c[3]);
     } else {
-        int shift = (fi - 64) * 12 * 256 / 64;   /* +-12 FREQ steps, ~1 octave */
-        for (b = 0; b < BANK_N; b++)
-            band_coef(BANK_BASE_FI8[b] + shift, ek, BANK_GAIN[b] << 3, &c[b]);
+        int shift = (fi - 64) * 12 * 256 / 64;      /* +-12 FREQ steps, ~1 octave */
+        int spread = a1 * 12 * 256 / 127;           /* SPREAD: top band +1 octave */
+        for (b = 0; b < BANK_N; b++) {
+            int off = spread * b / 3;
+            int tilt = a2 * (2 * b - 3) / 3;        /* TILT: 0 = flat */
+            int32 g = mulsh(BANK_GAIN[b], (127 + tilt) * 258, 15) << 3;
+            band_coef(BANK_BASE_FI8[b] + shift + off, ek, g, &c[b]);
+        }
     }
 }
 
@@ -119,13 +138,13 @@ int digifilter_disp_orig;
 static int32 biq_st[8][8];
 static struct bcoef prev_c[8][MAX_BANDS];
 static int prev_type[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
-static int prev_fi[8], prev_qi[8];
+static int prev_fi[8], prev_qi[8], prev_a1[8], prev_a2[8];
 static int crush_hold[8];
 static int32 crush_last[8];
 
 /* FOLD: triangle wavefolder. The input is shifted to Q27 and driven 1..8x,
  * then folded around +-1 (2^27) with a bias from RESO. No state. */
-#define FOLD_F (1 << 27)
+#define FOLD_F FM_FULL
 static inline int32 fold_sample(int32 x, int drive, int32 bias)
 {
     int32 v = (x >> 4) * drive + bias;
@@ -241,7 +260,10 @@ static void run_phaser(int fi, int qi, int32 *buf, int v)
             y1[k] = y;
             x = y;
         }
-        buf[i] = (x + dry) >> 1;
+        /* A first-order allpass passes a step with overshoot; four in series
+         * can push the dry+wet sum past full scale on transients. Saturate the
+         * output so it clips cleanly instead of wrapping the 32-bit sample. */
+        buf[i] = sat_full((x + dry) >> 1);
     }
     for (k = 0; k < 4; k++) {
         ph_x1[v][k] = x1[k];
@@ -255,28 +277,30 @@ static void run_phaser(int fi, int qi, int32 *buf, int v)
 }
 
 /* ---- FLANGER: LFO-modulated fractional delay with feedback ---- */
-#define FL_N 512
+#define FL_N 256
 #define FL_MASK (FL_N - 1)
-static int32 fl_buf[8][FL_N];
+/* 16-bit line: Q15 per entry (1.0 = 32768), converted to/from Q27 at the
+ * edges. 256 entries hold the 2..255-sample sweep (max 5.3 ms). */
+static short fl_buf[8][FL_N];
 static int fl_pos[8];
 static uint32 fl_phase[8];
 
 static void run_flanger(int fi, int qi, int32 *buf, int v)
 {
     uint32 ph = fl_phase[v], inc = LFO_INC[fi];
-    int32 *b = fl_buf[v];
+    short *b = fl_buf[v];
     int p = fl_pos[v];
-    int32 base = 72 << 16;                      /* 1.5 ms */
+    int32 base = 128 << 16;                     /* 2.7 ms centre */
     int32 depth = qi;                           /* up to +-127 samples */
     int32 g = (int32)qi * (FOLD_F * 4 / 5 / 127);
     int i;
     for (i = 0; i < 32; i++) {
         int32 x = buf[i], lfo = SINE_Q15[ph >> 24];
-        int32 dq = base + lfo * depth * 2;      /* Q16 samples */
-        int32 ip, fp, i0, i1, val, y, fa, da, ga, va;
+        int32 dq = base + lfo * depth * 2;      /* Q16 samples, +-depth */
+        int32 ip, fp, i0, i1, val, fb, fa, ga, va;
         ph += inc;
-        if (dq < (1 << 16))
-            dq = 1 << 16;
+        if (dq < (2 << 16))                     /* centre 128 > depth 127 */
+            dq = 2 << 16;
         else if (dq > (FL_MASK << 16))
             dq = FL_MASK << 16;
         ip = dq >> 16;
@@ -284,18 +308,15 @@ static void run_flanger(int fi, int qi, int32 *buf, int v)
         i0 = (p - ip) & FL_MASK;
         i1 = (i0 - 1) & FL_MASK;
         fa = fp >> 1;
-        da = (b[i1] - b[i0]) >> 13;
-        val = b[i0] + ((fa * da) >> 2);
+        val = ((int32)b[i0] + ((fa * (b[i1] - b[i0])) >> 15)) << 12;
+        /* Feedback goes into the line; the output is the usual dry + delayed
+         * mix, so RESO 0 still gives a comb and RESO only adds regeneration. */
         ga = g >> 12;
         va = val >> 11;
-        y = x + ((ga * va) >> 4);
-        if (y > FOLD_F)
-            y = FOLD_F;
-        else if (y < -FOLD_F)
-            y = -FOLD_F;
-        b[p] = y;
+        fb = sat_full(x + ((ga * va) >> 4));
+        b[p] = (short)clampi((fb + 2048) >> 12, -32768, 32767);
         p = (p + 1) & FL_MASK;
-        buf[i] = (x + y) >> 1;
+        buf[i] = (x + val) >> 1;
     }
     fl_phase[v] = ph;
     fl_pos[v] = p;
@@ -323,18 +344,58 @@ static int cutoff_index(unsigned char *params, int v)
     return clampi(base >> 8, 0, 127);
 }
 
+/* The two second-page controls live in spare sound slots (0x2f/0x30), which
+ * the sound serializer does not carry. Mirror them into the low bytes of the
+ * unused Base/Width slots, as the parent DigiFilter does for HARM/DAMP. */
+static void aux_persist(void)
+{
+    unsigned char *kit = UI_KIT;
+    static const int spare[2] = { FS_AUX1, FS_AUX2 };
+    static const int donor[2] = { 0x21, 0x22 };
+    int t, i;
+    if (!kit)
+        return;
+    for (t = 0; t < 8; t++) {
+        int ty = FSLOT(kit, t, FS_TYPE) >> 8;
+        unsigned char *b;
+        if (ty != FM_FIRST_TYPE && ty != FM_FIRST_TYPE + 1)
+            continue;
+        b = SOUND(kit, t) + 0x14;
+        for (i = 0; i < 2; i++) {
+            volatile unsigned short *sp = (volatile unsigned short *)(b + 2 * spare[i]);
+            volatile unsigned short *dc = (volatile unsigned short *)(b + 2 * donor[i]);
+            unsigned v = *sp >> 8;
+            unsigned lo = *dc & 0xff;
+            if (v == 0 && lo != 0)
+                *sp = (unsigned short)((lo - 1) << 8);
+            else if (lo != v + 1)
+                *dc = (unsigned short)((*dc & 0xff00) | (v + 1));
+        }
+    }
+}
+
+extern void digifilter_page2_sync(void);
+
+void digifilter_tick(void *ctrl)
+{
+    (void)ctrl;
+    digifilter_page2_sync();
+    aux_persist();
+}
+
 /* Static knobs: one coefficient set and the 32-frame kernel. Moving knobs:
  * four 8-frame sub-blocks, each lerped from the last block's set. */
-static void run_mode(int m, int fi, int qi, int32 *buf, int v)
+static void run_mode(int m, int fi, int qi, int a1, int a2, int32 *buf, int v)
 {
     struct bcoef target[MAX_BANDS], *pc = prev_c[v];
     int32 coef[MAX_BANDS * 4], coef4[4 * MAX_BANDS * 4];
     int b, k, j;
     int reset = prev_type[v] != m;
-    int same = !reset && prev_fi[v] == fi && prev_qi[v] == qi;
+    int same = !reset && prev_fi[v] == fi && prev_qi[v] == qi &&
+               prev_a1[v] == a1 && prev_a2[v] == a2;
 
     if (!same)
-        build_target(m, fi, qi, target);
+        build_target(m, fi, qi, a1, a2, target);
     if (reset) {
         for (b = 0; b < 8; b++)
             biq_st[v][b] = 0;
@@ -369,6 +430,8 @@ static void run_mode(int m, int fi, int qi, int32 *buf, int v)
     prev_type[v] = m;
     prev_fi[v] = fi;
     prev_qi[v] = qi;
+    prev_a1[v] = a1;
+    prev_a2[v] = a2;
 }
 
 int digifilter_filt(unsigned char *params, int *buf, int active, int voice)
@@ -380,6 +443,8 @@ int digifilter_filt(unsigned char *params, int *buf, int active, int voice)
         if (m >= 0 && m < FM_NMODES) {
             int fi = cutoff_index(params, voice);
             int qi = clampi((unsigned)SET_RESO(voice) >> 8, 0, 127);
+            int a1 = clampi((unsigned)PARAM_SLOT(params, FS_AUX1) >> 8, 0, 127);
+            int a2 = clampi((unsigned)PARAM_SLOT(params, FS_AUX2) >> 8, 0, 127);
             if (m == FM_FOLD) {
                 prev_type[voice] = m;
                 run_fold(fi, qi, buf);
@@ -416,7 +481,7 @@ int digifilter_filt(unsigned char *params, int *buf, int active, int voice)
                 }
                 run_flanger(fi, qi, buf, voice);
             } else {
-                run_mode(m, fi, qi, buf, voice);
+                run_mode(m, fi, qi, a1, a2, buf, voice);
             }
             return 1;
         }

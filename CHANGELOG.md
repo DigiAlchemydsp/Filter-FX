@@ -4,6 +4,66 @@ All notable changes to Filter+FX. Format-2
 [elekloader](https://github.com/irpina/elekloader) mod for the Elektron
 Digitakt **mk1, OS 1.53 and 1.54**.
 
+## [1.1a] - 2026-10-20
+
+### Added
+
+- **VOWEL second-page controls**: **SIZE** (F1-F4 up to +1 octave) and **F4**
+  (3300 Hz band level, 1x-2x).
+- **BANK second-page controls**: **SPRD** (spread the bank spacing up to +1
+  octave on the top band) and **TILT** (dark to bright).
+- Second-page descriptors and round dials, plus Base/Width low-byte mirroring
+  for kit persistence.
+- Other Filter+FX modes leave the second page stock.
+
+### Fixed
+
+- **FLANGER**: the delayed tap fed the feedback line but never the output, so
+  RESO 0 was pure dry and higher settings were a resonant echo rather than a
+  flange. The output is now the normal dry + delayed mix with feedback in the
+  line.
+- **FLANGER**: the delay centre (72 samples) was smaller than the LFO swing
+  (+-2 x RESO), so RESO above 36 clamped the delay to one sample and the sweep
+  collapsed. The centre is now 128 samples (2.7 ms), the swing +-RESO, and the
+  minimum two samples.
+- **PHASER**: four cascaded allpasses overshoot on transients (up to ~1.2x full
+  scale at some frequencies), so the dry + wet sum wrapped/clipped the 32-bit
+  sample. The output now saturates at +-2^27 like the biquad and comb kernels.
+- **OS 1.54 UI**: the 1.54 elemod had been built from the shared work folder
+  without the `OS154` defines, so it called the 1.53 FILLRECT/UI addresses and
+  drew neither the response curves nor the TYPE glyphs. The port is now built
+  from a clean work folder and its panels match 1.53 pixel for pixel.
+- **Second-page dials**: the needle swept counter-clockwise and started at
+  ~11:00. It now runs clockwise from 9:00 (value 0) through 12:00 to 7:00
+  (value 127), a 300-degree sweep.
+
+### Changed
+
+- **FLANGER RAM**: the delay line is now 256 entries of 16-bit (4 KB) instead of
+  512 entries of 32-bit (16 KB), keeping the same 2..255-sample sweep. The
+  mod's `.bss` drops from 18360 to 6072 bytes; total RAM with core 2.1 drops
+  from 51232 to 38952 bytes. The 16-bit line adds ~-90 dBFS quantisation noise.
+
+### Performance
+
+- VOWEL: 3074 instructions / ~3513 cycles static; 5082 / ~6371 swept.
+- BANK: 3074 / ~3515 static; 5376 / ~7009 swept.
+- PHASER: 2681 / ~3740 static and swept (was 2585 / ~3708 before the output
+  saturation).
+- FLANGER: 2019 / ~2371 static and swept (was 1796 / ~2178; the 16-bit line
+  adds load/sign-extend and scale conversion).
+- The other modes are unchanged.
+
+### Verification
+
+- `tests/digiemu_filter_fx_page2.py` PASS: C/G map to slots 0x2f/0x30, layout
+  `{39,0,14,42,40,41,15,43}`, descriptors 14/15 are filter descriptors, and a
+  stock TYPE restores the stock page.
+- ColdFire aux test: SIZE/F4 and SPRD/TILT all change the DSP output.
+- `tests/analog_smoke.py` also checks that PHASER stays inside full scale on a
+  full-scale input and that FLANGER's first echo lands at its 128-sample centre.
+- Build + lint pass for OS 1.53 and 1.54.
+
 ## [1.0c] - 2026-10-18
 
 ### Added

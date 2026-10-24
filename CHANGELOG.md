@@ -1,8 +1,25 @@
 # Changelog
 
 All notable changes to Filter+FX. Format-2
-[elekloader](https://github.com/irpina/elekloader) mod for the Elektron
-Digitakt **mk1, OS 1.53 and 1.54**.
+[elekloader](https://github.com/irpina/elekloader) mods for the Elektron
+**Digitakt mk1** and **Digitone mk1 / Keys**.
+
+## [1.2] - 2026-10-22
+
+### Added
+
+- **Digitone mk1/Keys port** (`filter-fx-dn/`): VOWEL/BANK/FOLD/CRUSH/RING/
+  PHASER/FLANGER as TYPE 4..10, per-voice FREQ/RESO, VOWEL/BANK AUX1/AUX2 on
+  page-2 C/G (params 182/183), response/transfer graphs and TYPE icons.
+- Release package now carries **one elemod per machine**:
+  `filter-fx-1.2-dt.elemod` (Digitakt 1.54) and `filter-fx-dn-1.2.elemod`
+  (Digitone 1.44).
+
+### Changed
+
+- Digitakt release build targets **OS 1.54** with core 4.0.
+- Shared DSP for the Digitone lives in `fx_dsp.c` + `biquad_dsp.s`; the DT
+  mod keeps its existing sources.
 
 ## [1.1a] - 2026-10-20
 

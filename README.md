@@ -1,9 +1,10 @@
 # Filter+FX
 
 **Filter+FX** is a standalone [elekloader](https://github.com/irpina/elekloader)
-mod for the **Elektron Digitakt mk1**. It adds seven per-track filter/FX modes
+mods for the **Elektron Digitakt mk1** and **Digitone mk1 / Keys**. The Digitakt mod adds seven per-track filter/FX modes
 alongside the stock filter, each using the track's own **FREQ**, **RESO** and
-filter envelope. The FLTR page is redrawn with a custom TYPE-box icon and a
+filter envelope. The Digitone port is in `filter-fx-dn/` (TYPE 4..10, with
+VOWEL/BANK AUX1/AUX2 on page 2). The FLTR page is redrawn with a custom TYPE-box icon and a
 dedicated graph for every mode.
 
 | TYPE | mode | controls |
@@ -89,32 +90,34 @@ export PATH="<m68k-elf bin>:$PATH"
 export ELEKLOADER_CROSS=m68k-elf-
 export PYTHONPATH="<elekloader checkout>"
 
-python -m elekloader.sdk.build . --stock <Digitakt_OS1.53.syx>
-python -m elekloader.lint  out/filter-fx-1.1a.elemod \
-    --stock <Digitakt_OS1.53.syx> --with <core.elemod>
+python -m elekloader.sdk.build . --stock <Digitakt_OS1.54.syx>
+python -m elekloader.lint  out/filter-fx-1.2-os1.54.elemod \
+    --stock <Digitakt_OS1.54.syx> --with <core-4.0-os1.54.elemod>
 ```
 
-`mod.json` also carries the OS 1.54 port; use the 1.54 stock with an
-elekloader that supports it. Delete `out/filter-fx.work` before building the
-other port: the SDK reuses that folder and its objects are not keyed by the
-port's defines, so an unclean build keeps the first port's `FILLRECT`/UI
-addresses and the curves and TYPE glyphs do not draw.
+The Digitone port builds from `filter-fx-dn/` against `Digitone_OS1.44.syx`
+with `core-dn1-4.0-os1.44.elemod`. `tools/build_release.py` builds, lints,
+patch-checks and packages both machines at once.
 
 ## Install
 
 ```sh
-python -m elekloader.patch --stock Digitakt_OS1.53.syx \
-    --mod core-2.1.elemod --mod out/filter-fx-1.1a.elemod \
-    --out Digitakt_OS1.53-filter-fx.syx --version 2.0t
+python -m elekloader.patch --stock Digitakt_OS1.54.syx \
+    --mod core-4.0-os1.54.elemod --mod releases/elemods/filter-fx-1.2-dt.elemod \
+    --out Digitakt_OS1.54-filter-fx.syx --version 1.2a
 ```
 
-Then flash the `.syx` with Elektron Transfer.
+Then flash the `.syx` with Elektron Transfer. For the Digitone use
+`Digitone_OS1.44.syx`, `core-dn1-4.0-os1.44.elemod` and
+`releases/elemods/filter-fx-dn-1.2.elemod`.
 
 ## Sources
 
 | file | |
 |---|---|
-| `filter.c` | the seven models, biquad ramps and the per-voice entry |
+| `filter.c` | the Digitakt adapter, models, biquad ramps and per-voice entry |
+| `fx_dsp.c` | the shared Filter+FX DSP used by the DN port |
+| `filter-fx-dn/` | Digitone mk1/Keys adapter, manifest, UI and notes |
 | `biquad_dsp.s` | four independent biquads in one eMAC pass |
 | `filter_glue.s` | TYPE label formatter and per-voice dispatch |
 | `filter_ui.c` | response/transfer/modulation graphs and the TYPE-box art |

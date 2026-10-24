@@ -142,7 +142,5 @@ notice.
 - **Digital Alchemy DSP** — the mod, the SVF/biquad kernels and the Digitakt UI.
 - The formant model is adapted from **SynVOW**'s `FormantEngine`
   (ER-301 MouthTowel lineage).
-- **Simon Johansson** — the Oberheim OB-1 modes in the parent DigiFilter, whose
-  fixed-point/assembly patterns this fork reuses.
 
 No Elektron firmware is included. GPL-2.0-or-later; see `LICENSE`.
